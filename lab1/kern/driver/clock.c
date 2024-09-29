@@ -38,9 +38,15 @@ void clock_init(void) {
     // divided by 500 when using Spike(2MHz)
     // divided by 100 when using QEMU(10MHz)
     // timebase = sbi_timebase() / 500;
-    clock_set_next_event();
 
-    // initialize time counter 'ticks' to zero
+    //clock_set_next_event();
+    //__asm__ volatile("ebreak"); // 插入一个ebreak指令以生成断点异常 
+    //__asm__ volatile("mret"); 
+
+    __asm__ volatile(".word 0xFFFFFFFF"); // 使用无效的操作码生成非法指令 
+
+    
+
     ticks = 0;
 
     cprintf("++ setup timer interrupts\n");
