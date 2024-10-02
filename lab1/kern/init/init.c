@@ -15,7 +15,7 @@ void grade_backtrace(void);
 
 int kern_init(void) {
     extern char edata[], end[];
-    memset(edata, 0, end - edata);
+    memset(edata, 0, end - edata);//设置bss段
 
     cons_init();  // init the console
 
