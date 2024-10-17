@@ -136,7 +136,7 @@ static size_t calculate_objs_num(size_t obj_size) {
     // 总内存占用 = slab_struct_size + (object_size * n) + ceil(n / 8)
     // 我们需要找到最大的 n，使得：
     // slab_struct_size + (object_size * n) + ceil(n / 8) <= PGSIZE
-    // 取整
+    // 实际上整数的除法是个很好的操作，能直接实现结果向下取整的效果。
     size_t objects_per_slab = ((PGSIZE - slab_struct_size) / (obj_size + 1.0 / 8.0));
     // 确保至少有一个对象
     if (objects_per_slab == 0) {
