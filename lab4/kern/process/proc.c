@@ -102,8 +102,18 @@ alloc_proc(void) {
      *       uint32_t flags;                             // Process flag
      *       char name[PROC_NAME_LEN + 1];               // Process name
      */
-
-
+        proc->state=PROC_UNINIT;
+        proc->pid=-1;
+        proc->runs=0;
+        proc->cr3=boot_cr3;
+        proc->kstack=0;
+        proc->need_resched=0;
+        proc->parent = NULL;
+        proc->mm = NULL;
+        proc->tf=NULL;
+        proc->flags = 0;
+        memset(&proc->name, 0, PROC_NAME_LEN);
+        memset(&proc->context,0,sizeof(struct context));
     }
     return proc;
 }
@@ -172,7 +182,14 @@ proc_run(struct proc_struct *proc) {
         *   lcr3():                   Modify the value of CR3 register
         *   switch_to():              Context switching between two processes
         */
-       
+        bool intr_flag;
+        local_intr_save(intr_flag);
+        {
+            struct proc_struct *curr_proc = current;
+            current = proc;
+            switch_to(&(curr_proc->context),&(proc->context));
+        }
+        local_intr_restore(intr_flag);
     }
 }
 
@@ -194,6 +211,7 @@ hash_proc(struct proc_struct *proc) {
 struct proc_struct *
 find_proc(int pid) {
     if (0 < pid && pid < MAX_PID) {
+        //找那个hash列表，遍历里面的pid
         list_entry_t *list = hash_list + pid_hashfn(pid), *le = list;
         while ((le = list_next(le)) != list) {
             struct proc_struct *proc = le2proc(le, hash_link);
@@ -249,15 +267,15 @@ copy_mm(uint32_t clone_flags, struct proc_struct *proc) {
 //             - setup the kernel entry point and stack of process
 static void
 copy_thread(struct proc_struct *proc, uintptr_t esp, struct trapframe *tf) {
-    proc->tf = (struct trapframe *)(proc->kstack + KSTACKSIZE - sizeof(struct trapframe));
-    *(proc->tf) = *tf;
+    proc->tf = (struct trapframe *)(proc->kstack + KSTACKSIZE - sizeof(struct trapframe));//分配栈顶
+    *(proc->tf) = *tf;//放进来
 
     // Set a0 to 0 so a child process knows it's just forked
     proc->tf->gpr.a0 = 0;
     proc->tf->gpr.sp = (esp == 0) ? (uintptr_t)proc->tf : esp;
 
-    proc->context.ra = (uintptr_t)forkret;
-    proc->context.sp = (uintptr_t)(proc->tf);
+    proc->context.ra = (uintptr_t)forkret;//进一步forkrets
+    proc->context.sp = (uintptr_t)(proc->tf);//中断帧
 }
 
 /* do_fork -     parent process for a new child process
@@ -269,6 +287,7 @@ int
 do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf) {
     int ret = -E_NO_FREE_PROC;
     struct proc_struct *proc;
+    //线程数够多了
     if (nr_process >= MAX_PROCESS) {
         goto fork_out;
     }
@@ -292,15 +311,27 @@ do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf) {
      */
 
     //    1. call alloc_proc to allocate a proc_struct
+    if ((proc = alloc_proc()) == NULL) {
+        goto fork_out;
+    }
     //    2. call setup_kstack to allocate a kernel stack for child process
+    if(setup_kstack(proc)!=0){
+        goto bad_fork_cleanup_proc;
+    }
     //    3. call copy_mm to dup OR share mm according clone_flag
+    if(copy_mm(clone_flags,proc)!=0){
+        goto bad_fork_cleanup_kstack;
+    }
     //    4. call copy_thread to setup tf & context in proc_struct
+    copy_thread(proc,stack,tf);
     //    5. insert proc_struct into hash_list && proc_list
+    proc->pid=get_pid();
+    hash_proc(proc);
+    list_add(&proc_list,&(proc->list_link));
     //    6. call wakeup_proc to make the new child process RUNNABLE
+    wakeup_proc(proc);
     //    7. set ret vaule using child proc's pid
-
-    
-
+    ret=proc->pid;
 fork_out:
     return ret;
 
@@ -334,7 +365,7 @@ init_main(void *arg) {
 void
 proc_init(void) {
     int i;
-
+    //初始化所有的列表
     list_init(&proc_list);
     for (i = 0; i < HASH_LIST_SIZE; i ++) {
         list_init(hash_list + i);
@@ -344,7 +375,7 @@ proc_init(void) {
         panic("cannot alloc idleproc.\n");
     }
 
-    // check the proc structure
+    //检查我们的分配进程的函数
     int *context_mem = (int*) kmalloc(sizeof(struct context));
     memset(context_mem, 0, sizeof(struct context));
     int context_init_flag = memcmp(&(idleproc->context), context_mem, sizeof(struct context));
@@ -352,14 +383,13 @@ proc_init(void) {
     int *proc_name_mem = (int*) kmalloc(PROC_NAME_LEN);
     memset(proc_name_mem, 0, PROC_NAME_LEN);
     int proc_name_flag = memcmp(&(idleproc->name), proc_name_mem, PROC_NAME_LEN);
-
+    //全是提示
     if(idleproc->cr3 == boot_cr3 && idleproc->tf == NULL && !context_init_flag
         && idleproc->state == PROC_UNINIT && idleproc->pid == -1 && idleproc->runs == 0
         && idleproc->kstack == 0 && idleproc->need_resched == 0 && idleproc->parent == NULL
         && idleproc->mm == NULL && idleproc->flags == 0 && !proc_name_flag
     ){
         cprintf("alloc_proc() correct!\n");
-
     }
     
     idleproc->pid = 0;
@@ -387,6 +417,7 @@ proc_init(void) {
 void
 cpu_idle(void) {
     while (1) {
+        //不停检查当前进程是否要让贤
         if (current->need_resched) {
             schedule();
         }
