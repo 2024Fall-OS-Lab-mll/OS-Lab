@@ -39,84 +39,79 @@ static void check_vmm(void);
 static void check_vma_struct(void);
 static void check_pgfault(void);
 
-// mm_create -  alloc a mm_struct & initialize it.
-struct mm_struct *
-mm_create(void) {
-    struct mm_struct *mm = kmalloc(sizeof(struct mm_struct));
+//mm_create 创建好，进程占用数也是0哦-  alloc a mm_struct & initialize it.
+    struct mm_struct *
+    mm_create(void) {
+        struct mm_struct *mm = kmalloc(sizeof(struct mm_struct));
 
-    if (mm != NULL) {
-        list_init(&(mm->mmap_list));
-        mm->mmap_cache = NULL;
-        mm->pgdir = NULL;
-        mm->map_count = 0;
+        if (mm != NULL) {
+            list_init(&(mm->mmap_list));
+            mm->mmap_cache = NULL;
+            mm->pgdir = NULL;
+            mm->map_count = 0;
 
-        if (swap_init_ok) swap_init_mm(mm);
-        else mm->sm_priv = NULL;
-        
-        set_mm_count(mm, 0);
-        lock_init(&(mm->mm_lock));
-    }    
-    return mm;
-}
-
-// vma_create - alloc a vma_struct & initialize it. (addr range: vm_start~vm_end)
-struct vma_struct *
-vma_create(uintptr_t vm_start, uintptr_t vm_end, uint32_t vm_flags) {
-    struct vma_struct *vma = kmalloc(sizeof(struct vma_struct));
-
-    if (vma != NULL) {
-        vma->vm_start = vm_start;
-        vma->vm_end = vm_end;
-        vma->vm_flags = vm_flags;
+            if (swap_init_ok) swap_init_mm(mm);
+            else mm->sm_priv = NULL;
+            
+            set_mm_count(mm, 0);
+            lock_init(&(mm->mm_lock));
+        }    
+        return mm;
     }
-    return vma;
-}
+//虚拟连续小地址空间的一些操作
+    // vma_create - alloc a vma_struct & initialize it. (addr range: vm_start~vm_end)
+    struct vma_struct *
+    vma_create(uintptr_t vm_start, uintptr_t vm_end, uint32_t vm_flags) {
+        struct vma_struct *vma = kmalloc(sizeof(struct vma_struct));
 
-
-// find_vma - find a vma  (vma->vm_start <= addr <= vma_vm_end)
-struct vma_struct *
-find_vma(struct mm_struct *mm, uintptr_t addr) {
-    struct vma_struct *vma = NULL;
-    if (mm != NULL) {
-        vma = mm->mmap_cache;
-        if (!(vma != NULL && vma->vm_start <= addr && vma->vm_end > addr)) {
-                bool found = 0;
-                list_entry_t *list = &(mm->mmap_list), *le = list;
-                while ((le = list_next(le)) != list) {
-                    vma = le2vma(le, list_link);
-                    if (vma->vm_start<=addr && addr < vma->vm_end) {
-                        found = 1;
-                        break;
-                    }
-                }
-                if (!found) {
-                    vma = NULL;
-                }
-        }
         if (vma != NULL) {
-            mm->mmap_cache = vma;
+            vma->vm_start = vm_start;
+            vma->vm_end = vm_end;
+            vma->vm_flags = vm_flags;
         }
+        return vma;
     }
-    return vma;
-}
+    // find_vma - find a vma  (vma->vm_start <= addr <= vma_vm_end)
+    struct vma_struct *
+    find_vma(struct mm_struct *mm, uintptr_t addr) {
+        struct vma_struct *vma = NULL;
+        if (mm != NULL) {
+            vma = mm->mmap_cache;
+            if (!(vma != NULL && vma->vm_start <= addr && vma->vm_end > addr)) {
+                    bool found = 0;
+                    list_entry_t *list = &(mm->mmap_list), *le = list;
+                    while ((le = list_next(le)) != list) {
+                        vma = le2vma(le, list_link);
+                        if (vma->vm_start<=addr && addr < vma->vm_end) {
+                            found = 1;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        vma = NULL;
+                    }
+            }
+            if (vma != NULL) {
+                mm->mmap_cache = vma;
+            }
+        }
+        return vma;
+    }
+    // check_vma_overlap - check if vma1 overlaps vma2 ?
+    static inline void
+    check_vma_overlap(struct vma_struct *prev, struct vma_struct *next) {
+        assert(prev->vm_start < prev->vm_end);
+        assert(prev->vm_end <= next->vm_start);
+        assert(next->vm_start < next->vm_end);
+    }
 
 
-// check_vma_overlap - check if vma1 overlaps vma2 ?
-static inline void
-check_vma_overlap(struct vma_struct *prev, struct vma_struct *next) {
-    assert(prev->vm_start < prev->vm_end);
-    assert(prev->vm_end <= next->vm_start);
-    assert(next->vm_start < next->vm_end);
-}
-
-
-// insert_vma_struct -insert vma in mm's list link
-void
-insert_vma_struct(struct mm_struct *mm, struct vma_struct *vma) {
-    assert(vma->vm_start < vma->vm_end);
-    list_entry_t *list = &(mm->mmap_list);
-    list_entry_t *le_prev = list, *le_next;
-
+    // insert_vma_struct -insert vma in mm's list link
+    void
+    insert_vma_struct(struct mm_struct *mm, struct vma_struct *vma) {
+        assert(vma->vm_start < vma->vm_end);
+        list_entry_t *list = &(mm->mmap_list);
+        list_entry_t *le_prev = list, *le_next;
         list_entry_t *le = list;
         while ((le = list_next(le)) != list) {
             struct vma_struct *mmap_prev = le2vma(le, list_link);
@@ -126,35 +121,33 @@ insert_vma_struct(struct mm_struct *mm, struct vma_struct *vma) {
             le_prev = le;
         }
 
-    le_next = list_next(le_prev);
+        le_next = list_next(le_prev);
 
-    /* check overlap */
-    if (le_prev != list) {
-        check_vma_overlap(le2vma(le_prev, list_link), vma);
+        /* check overlap */
+        if (le_prev != list) {
+            check_vma_overlap(le2vma(le_prev, list_link), vma);
+        }
+        if (le_next != list) {
+            check_vma_overlap(vma, le2vma(le_next, list_link));
+        }
+        vma->vm_mm = mm;
+        list_add_after(le_prev, &(vma->list_link));
+        mm->map_count ++;
     }
-    if (le_next != list) {
-        check_vma_overlap(vma, le2vma(le_next, list_link));
+
+//保证没有进程使用它了再破坏掉。mm_destroy - free mm and mm internal fields
+    void
+    mm_destroy(struct mm_struct *mm) {
+        assert(mm_count(mm) == 0);
+
+        list_entry_t *list = &(mm->mmap_list), *le;
+        while ((le = list_next(list)) != list) {
+            list_del(le);
+            kfree(le2vma(le, list_link));  //kfree vma        
+        }
+        kfree(mm); //kfree mm
+        mm=NULL;
     }
-
-    vma->vm_mm = mm;
-    list_add_after(le_prev, &(vma->list_link));
-
-    mm->map_count ++;
-}
-
-// mm_destroy - free mm and mm internal fields
-void
-mm_destroy(struct mm_struct *mm) {
-    assert(mm_count(mm) == 0);
-
-    list_entry_t *list = &(mm->mmap_list), *le;
-    while ((le = list_next(list)) != list) {
-        list_del(le);
-        kfree(le2vma(le, list_link));  //kfree vma        
-    }
-    kfree(mm); //kfree mm
-    mm=NULL;
-}
 
 int
 mm_map(struct mm_struct *mm, uintptr_t addr, size_t len, uint32_t vm_flags,
@@ -183,24 +176,22 @@ mm_map(struct mm_struct *mm, uintptr_t addr, size_t len, uint32_t vm_flags,
     }
     ret = 0;
 
-out:
-    return ret;
+    out:
+        return ret;
 }
-
+//复制mm结构体，这里会复制每一个vma，调用copy_range
 int
 dup_mmap(struct mm_struct *to, struct mm_struct *from) {
     assert(to != NULL && from != NULL);
     list_entry_t *list = &(from->mmap_list), *le = list;
     while ((le = list_prev(le)) != list) {
-        struct vma_struct *vma, *nvma;
+        struct vma_struct *vma, *nvma;//每个虚拟地址都复制一份
         vma = le2vma(le, list_link);
         nvma = vma_create(vma->vm_start, vma->vm_end, vma->vm_flags);
         if (nvma == NULL) {
             return -E_NO_MEM;
         }
-
         insert_vma_struct(to, nvma);
-
         bool share = 0;
         if (copy_range(to->pgdir, from->pgdir, vma->vm_start, vma->vm_end, share) != 0) {
             return -E_NO_MEM;
@@ -210,7 +201,7 @@ dup_mmap(struct mm_struct *to, struct mm_struct *from) {
 }
 
 void
-exit_mmap(struct mm_struct *mm) {
+exit_mmap(struct mm_struct *mm) {//退出映射，先解除，再退出
     assert(mm != NULL && mm_count(mm) == 0);
     pde_t *pgdir = mm->pgdir;
     list_entry_t *list = &(mm->mmap_list), *le = list;
@@ -252,11 +243,8 @@ vmm_init(void) {
 // check_vmm - check correctness of vmm
 static void
 check_vmm(void) {
-    // size_t nr_free_pages_store = nr_free_pages();
-    
     check_vma_struct();
     check_pgfault();
-
     cprintf("check_vmm() succeeded.\n");
 }
 
@@ -319,9 +307,7 @@ check_vma_struct(void) {
 
     cprintf("check_vma_struct() succeeded!\n");
 }
-
 struct mm_struct *check_mm_struct;
-
 // check_pgfault - check correctness of pgfault handler
 static void
 check_pgfault(void) {
@@ -435,39 +421,35 @@ do_pgfault(struct mm_struct *mm, uint_t error_code, uintptr_t addr) {
             goto failed;
         }
     } else {
-        /*LAB3 EXERCISE 3: YOUR CODE
-        * 请你根据以下信息提示，补充函数
-        * 现在我们认为pte是一个交换条目，那我们应该从磁盘加载数据并放到带有phy addr的页面，
-        * 并将phy addr与逻辑addr映射，触发交换管理器记录该页面的访问情况
-        *
-        *  一些有用的宏和定义，可能会对你接下来代码的编写产生帮助(显然是有帮助的)
-        *  宏或函数:
-        *    swap_in(mm, addr, &page) : 分配一个内存页，然后根据
-        *    PTE中的swap条目的addr，找到磁盘页的地址，将磁盘页的内容读入这个内存页
-        *    page_insert ： 建立一个Page的phy addr与线性addr la的映射
-        *    swap_map_swappable ： 设置页面可交换
-        */
-        if (swap_init_ok) {
-            struct Page *page = NULL;
-            // 你要编写的内容在这里，请基于上文说明以及下文的英文注释完成代码编写
-            //(1）According to the mm AND addr, try
-            //to load the content of right disk page
-            //into the memory which page managed.
-            //(2) According to the mm,
-            //addr AND page, setup the
-            //map of phy addr <--->
-            //logical addr
-            //(3) make the page swappable.
-            if((ret = swap_in(mm,addr,&page)) != 0) {
+        struct Page *page = NULL;
+        if(*ptep & PTE_V & ~PTE_W){
+            // 原先所使用的只读物理页
+            page = pte2page(*ptep);
+            // 被多个进程引用
+            if(page_ref(page) > 1)
+            {
+                // 释放当前PTE的引用并分配一个新物理页
+                struct Page* newPage = pgdir_alloc_page(mm->pgdir, addr, perm);
+                uintptr_t* src = page2kva(page);
+                uintptr_t* dst = page2kva(newPage);
+                memcpy(dst, src, PGSIZE);
+            }
+            else{// 如果该物理页面只被当前进程所引用，直接执行page_insert。
+                page_insert(mm->pgdir, page, addr, perm);
+            }
+        }
+        else{
+            //正常交换逻辑
+            if (swap_init_ok) {
+                swap_in(mm,addr,&page);
+                page_insert(mm->pgdir,page,addr,perm);
+            } else {
+                cprintf("no swap_init_ok but ptep is %x, failed\n", *ptep);
                 goto failed;
             }
-            page_insert(mm->pgdir,page,addr,perm);
-            swap_map_swappable(mm,addr,page,1);
-            page->pra_vaddr = addr;
-        } else {
-            cprintf("no swap_init_ok but ptep is %x, failed\n", *ptep);
-            goto failed;
         }
+        swap_map_swappable(mm,addr,page,1);
+        page->pra_vaddr = addr;
    }
    ret = 0;
 failed:
@@ -483,13 +465,13 @@ user_mem_check(struct mm_struct *mm, uintptr_t addr, size_t len, bool write) {
         struct vma_struct *vma;
         uintptr_t start = addr, end = addr + len;
         while (start < end) {
-            if ((vma = find_vma(mm, start)) == NULL || start < vma->vm_start) {
+            if ((vma = find_vma(mm, start)) == NULL || start < vma->vm_start) {//存在vma
                 return 0;
             }
-            if (!(vma->vm_flags & ((write) ? VM_WRITE : VM_READ))) {
+            if (!(vma->vm_flags & ((write) ? VM_WRITE : VM_READ))) {//权限标志 匹配 访问类型
                 return 0;
             }
-            if (write && (vma->vm_flags & VM_STACK)) {
+            if (write && (vma->vm_flags & VM_STACK)) {//检查写操作是否访问堆栈区域
                 if (start < vma->vm_start + PGSIZE) { //check stack start & size
                     return 0;
                 }
@@ -500,3 +482,4 @@ user_mem_check(struct mm_struct *mm, uintptr_t addr, size_t len, bool write) {
     }
     return KERN_ACCESS(addr, addr + len);
 }
+
